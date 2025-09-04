@@ -1,0 +1,171 @@
+1️⃣ 生成 CA（证书颁发机构）
+
+在一台安全机器上（不一定是 HostA/B/C），安装好 nebula-cert，执行：
+
+# 创建 CA
+nebula-cert ca -name "MyNebulaCA"
+
+
+会生成：
+
+ca.crt
+
+ca.key
+
+2️⃣ 为每个节点生成证书
+HostA
+nebula-cert sign -name "hosta" -ip "10.99.0.1/24"
+
+
+生成：
+
+hosta.crt
+
+hosta.key
+
+HostB
+nebula-cert sign -name "hostb" -ip "10.99.0.2/24"
+
+HostC（Lighthouse + Relay）
+nebula-cert sign -name "hostc" -ip "10.99.0.3/24"
+
+3️⃣ 配置文件示例
+HostC（Lighthouse + Relay）
+
+hostc/config.yml：
+
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/hostc.crt
+  key: /etc/nebula/hostc.key
+
+static_host_map:
+  "10.99.0.3": ["1.1.1.3:4242"]
+
+lighthouse:
+  am_lighthouse: true
+  interval: 60
+  hosts:
+    - "10.99.0.3"
+
+relay:
+  am_relay: true
+
+listen:
+  host: 0.0.0.0
+  port: 4242
+
+firewall:
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+  outbound:
+    - port: any
+      proto: any
+      host: any
+  inbound:
+    - port: any
+      proto: any
+      host: any
+
+HostA
+
+hosta/config.yml：
+
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/hosta.crt
+  key: /etc/nebula/hosta.key
+
+static_host_map:
+  "10.99.0.3": ["1.1.1.3:4242"]
+
+lighthouse:
+  am_lighthouse: false
+  interval: 60
+  hosts:
+    - "10.99.0.3"
+
+relay:
+  relays:
+    - "10.99.0.3"
+
+listen:
+  host: 0.0.0.0
+  port: 4242
+
+firewall:
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+  outbound:
+    - port: any
+      proto: any
+      host: any
+  inbound:
+    - port: any
+      proto: any
+      host: any
+
+HostB
+
+hostb/config.yml：
+
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/hostb.crt
+  key: /etc/nebula/hostb.key
+
+static_host_map:
+  "10.99.0.3": ["1.1.1.3:4242"]
+
+lighthouse:
+  am_lighthouse: false
+  interval: 60
+  hosts:
+    - "10.99.0.3"
+
+relay:
+  relays:
+    - "10.99.0.3"
+
+listen:
+  host: 0.0.0.0
+  port: 4242
+
+firewall:
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+  outbound:
+    - port: any
+      proto: any
+      host: any
+  inbound:
+    - port: any
+      proto: any
+      host: any
+
+4️⃣ 部署方式
+
+将 ca.crt 分发到所有节点 /etc/nebula/。
+
+每台主机只拿自己的 xxx.crt、xxx.key 和 config.yml。
+
+启动 Nebula：
+
+sudo nebula -config /etc/nebula/config.yml
+
+
+验证连通性：
+
+ping 10.99.0.2   # 从 HostA ping HostB
+ping 10.99.0.3   # 从 HostA ping HostC
+
+
+这样就形成了一个 HostC 作为 Lighthouse + Relay 的完整 PKI + 配置结构，未来要加新节点只需要：
+
+nebula-cert sign -name "newhost" -ip "10.99.0.X/24"
+
+
+然后给它配置 static_host_map 指向 HostC 就行。
