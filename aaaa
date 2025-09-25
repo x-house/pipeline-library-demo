@@ -109,3 +109,27 @@ HTTPS 不信任证书：确保客户端安装了 Burp CA certificate。对于移
 客户端浏览器代理设置为 192.168.1.10:8080，并安装 Burp CA。
 
 测试并在 Burp 的 HTTP history 查看流量。
+
+
+
+
+
+
+===================
+、HTTPS 流量拦截
+3.1 证书安装流程
+导出证书：
+
+Burp 中Proxy → Options → Import/Export CA Certificate
+选择 DER 格式保存为burp.crt
+浏览器信任：
+
+Firefox：设置→隐私与安全→证书→导入并信任
+Chrome/Edge：chrome://settings/certificates→授权机构→导入
+3.2 移动端配置
+Android：
+导出证书为burp.crt
+通过文件管理器导入并安装
+iOS：
+浏览器访问http://burp下载证书
+设置→通用→VPN 与设备管理→安装描述文件
