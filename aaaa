@@ -133,3 +133,26 @@ Android：
 iOS：
 浏览器访问http://burp下载证书
 设置→通用→VPN 与设备管理→安装描述文件
+
+
+## 如何在iOS设备上安装Burp证书？
+
+在iOS设备上安装Burp证书非常简单，只需要按照以下步骤进行操作：
+
+1. 首先，你需要将iOS设备与Burp Suite代理服务器连接到同一个网络中。
+
+2. 然后，在Burp Suite中选择Proxy -> Options，进入Proxy Options页面。
+
+3. 在Proxy Options页面中，选择Import / Export CA Certificate，然后选择Export CA Certificate to DER format。
+
+4. 保存证书文件到本地，然后将证书文件发送到iOS设备。
+
+5. 在iOS设备上打开Safari浏览器，然后访问http://burp，并下载Burp Suite证书。
+
+6. 在iOS设备上打开设置，然后选择通用 -> 描述文件。在这里，你应该能够看到刚刚下载的Burp证书。
+
+7. 点击Burp证书，然后选择安装。你可能需要输入你的设备密码来完成安装。
+
+8. 安装完成后，你应该能够在通用 -> 关于本机 -> 证书信任设置中看到Burp证书。打开证书信任设置，然后启用Burp证书的完全信任。
+
+现在，你已经成功地在iOS设备上安装了Burp证书。你可以使用Burp Suite代理服务器来拦截和修改HTTPS流量，以便于对Web应用程序进行安全测试。
