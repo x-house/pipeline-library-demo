@@ -1,0 +1,111 @@
+目标是让别的客户端能通过你的 Burp（作为中间代理），由 Burp 再转发到别人给你的上游 proxy（third proxy），流程：
+
+client → Burp（你的机器，做入站 proxy）→ third-proxy → 互联网
+
+下面按“准备 → 配置 Burp 接收外部连接 → 配置 Burp 转发到上游 proxy → 客户端设置 → 安全与排查”来写，直接按照步骤做就行。
+
+1) 准备（你需要的东西）
+
+你的 Burp 可访问的网卡 IP（例如 192.168.1.10 或公网 IP）
+
+第三方代理信息（类型、地址、端口、是否需要用户名/密码；例如 http 10.1.2.3:3128 或 socks5 10.1.2.3:1080）
+
+其他客户端能连到你这台机器的网络通路（防火墙、路由）
+
+Burp Professional / Community 都可以做基本的上游代理配置，但部分自动化功能在 Professional 更友好
+
+2) 在 Burp 上让它接收来自其他客户端的代理请求
+
+打开 Burp → Proxy → Options → 在 Proxy Listeners 区域，你会看到默认 127.0.0.1:8080 的 listener。
+
+点击 Add（或 Edit 原 listener），把监听地址改为你机器的接口 IP（例如 192.168.1.10）或选择 All interfaces / 0.0.0.0（若要让任意网卡都可连）。端口按你需要（例如 8080）。
+
+注意：不要随便把 Burp 直接暴露到公网（安全风险），若必须暴露请务必做好访问控制（见第6节）。
+
+保存。確認 Proxy Listeners 中新增的条目为 192.168.1.10:8080 或 0.0.0.0:8080 且状态为 Listening。
+
+小提示：如果你在编辑 listener 时看到“Allow remote clients to connect”或类似复选项，勾选它（不同版本 UI 文案略有差异），否则只接受本机连接。
+
+3) 在 Burp 上配置上游（第三方）代理（Burp 发出的请求走上游代理）
+
+打开 Burp → User options（或 Project options）→ Connections → 找到 Upstream proxy servers。
+
+点击 Add：填写规则。
+
+Destination host: *（如果你希望 Burp 的所有外出请求都走这个上游代理）或填具体域名/子网（例如 *.example.com）。
+
+Proxy host: 第三方代理的 IP，比如 10.1.2.3
+
+Proxy port: 例如 3128
+
+如果上游代理需要用户名/密码，在字段填入（Basic auth）。
+
+保存。顺序很重要：规则是从上到下匹配，匹配第一个生效。
+
+如果第三方是 SOCKS 而非 HTTP(S)：
+
+在同一页（Connections）启用 Use SOCKS proxy（或填写 SOCKS 主机/端口）；这是一个全局 TCP 层的设置，会把出站 TCP 走到 SOCKS。
+
+4) 给其他人（client）如何设置
+
+让其他人把浏览器或他们的系统代理指向你的 Burp listener 地址，例如：
+
+代理主机：192.168.1.10（你的 Burp IP）
+
+代理端口：8080
+
+并且：
+
+把 Burp CA 证书安装到他们的浏览器/操作系统（用于拦截 HTTPS），否则 HTTPS 会报证书错误。
+
+在 Burp → Proxy → Options → 点击 “CA certificate” 或者在 http://<burp-ip>:<port>/（如果你启用了那个 listener 并启用了临时网页）下载并导入。
+
+推荐使用 FoxyProxy / Proxy SwitchyOmega 在浏览器里切换。
+
+5) 测试流程
+
+在客户端设置好代理并访问 http://example.com。
+
+在你的 Burp → Proxy → HTTP history 应该能看到该请求（表示客户端确实连到你的 Burp）。
+
+Burp 会把请求按上游代理规则发给第三方代理，再由第三方代理访问目标网站。
+
+如果一切正常，浏览器能加载页面；若失败，Burp 的 Event log / Error window 会有错误信息（认证失败、连接超时、DNS 错误等）。
+
+6) 安全建议（非常重要）
+
+不要直接在公网暴露 Burp，否则任何人都能通过你的机器上网并可能滥用。
+
+最少做法：通过防火墙仅允许特定客户端 IP/子网访问 192.168.1.10:8080（iptables、ufw、云安全组等）。
+
+Linux iptables 示例（只允许 192.168.1.20 访问 8080）：
+
+iptables -A INPUT -p tcp -s 192.168.1.20 --dport 8080 -j ACCEPT
+iptables -A INPUT -p tcp --dport 8080 -j DROP
+
+
+更安全的做法：在 Burp 前放一层反向代理/认证层（如 nginx + HTTP basic auth 或 haproxy），或者只在内网使用 VPN 隧道让客户端连入内网后再访问 Burp。
+
+限制日志与敏感信息访问，仅授权可信人员使用 Burp 的流量捕获功能。
+
+7) 常见问题与排查
+
+客户端连不上 Burp：检查客户端代理地址/端口是否指向正确 IP，以及你机器是否有防火墙阻断。
+
+Burp 有请求但请求未走第三方代理：检查 Upstream proxy 规则是否匹配（Destination host），或是否填写错了 proxy host/port。把 Destination host 设为 * 做测试。
+
+上游代理要求 NTLM/Kerberos：Burp 只能做基本的 username/password（Basic）认证；NTLM/Negotiate 可能不被直接支持，需要在 Burp 之外做身份代理（如用 cntlm、ntlmaps 等中间件）。
+
+DNS 问题：注意是谁做 DNS 解析——有些上游 proxy 会替你解析（代理端解析），有些会要求客户端解析再发 IP。根据 need 检查。
+
+HTTPS 不信任证书：确保客户端安装了 Burp CA certificate。对于移动设备，可能需在系统信任证书里安装并信任它。
+
+8) 示例一套最简配置（快速复述）
+
+在 Burp Proxy → Options 添加 listener：Bind to address = 192.168.1.10, Port = 8080（Accept remote connections）。
+
+在 Burp User options → Connections → Upstream proxy servers 增加一条： Destination * → Proxy 10.1.2.3:3128（用户名/密码按需）。
+
+客户端浏览器代理设置为 192.168.1.10:8080，并安装 Burp CA。
+
+测试并在 Burp 的 HTTP history 查看流量。
