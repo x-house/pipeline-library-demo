@@ -1,0 +1,16 @@
+Start-Process -FilePath 'C:\Users\Ryuka\Downloads\ZAP_2_16_1_windows.exe' `
+  -ArgumentList '-q' `
+  -Wait -Verb RunAs
+
+tasks:
+  - name: Run ZAP installer silently
+    win_shell: Start-Process -FilePath 'C:\Users\Ryuka\Downloads\ZAP_2_16_1_windows.exe' -ArgumentList '-q' -Wait
+    args:
+      executable: powershell.exe
+
+cd ~/Downloads
+wget https://github.com/zaproxy/zaproxy/releases/download/v2.16.1/ZAP_2_16_1_unix.sh
+sudo chmod +x ZAP_2_16_1_unix.sh
+su (enter root password to become root user)
+./ZAP_2_16_1_unix.sh
+#Finish the installation      
