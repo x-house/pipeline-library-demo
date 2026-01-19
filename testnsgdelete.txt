@@ -1,0 +1,146 @@
+核心思路：
+
+tfvars 里是一个 map/list，带 end_date
+
+locals 里先做“过滤”
+
+for_each 只对未过期的用户生效
+
+一、推荐数据结构（tfvars）
+terraform.tfvars
+users = {
+  userA = {
+    end_date = "2025-03-01"
+    location = "eastus"
+  }
+
+  userB = {
+    end_date = "2024-12-01"
+    location = "eastus"
+  }
+
+  userC = {
+    end_date = "2026-01-01"
+    location = "westeurope"
+  }
+}
+
+二、variables.tf
+variable "users" {
+  type = map(object({
+    end_date = string
+    location = string
+  }))
+}
+
+三、核心：先过滤“未过期用户”
+locals {
+
+  today = formatdate("YYYY-MM-DD", timestamp())
+
+  valid_users = {
+    for k, v in var.users :
+    k => v
+    if local.today <= v.end_date
+  }
+}
+
+
+💡 关键点
+
+先在 locals 里过滤
+
+for_each 只用 valid_users
+
+四、NSG for_each
+resource "azurerm_network_security_group" "this" {
+
+  for_each = local.valid_users
+
+  name                = "${each.key}-nsg"
+  location            = each.value.location
+  resource_group_name = azurerm_resource_group.this.name
+
+  security_rule {
+    name                       = "allow-ssh"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  tags = {
+    owner    = each.key
+    end_date = each.value.end_date
+  }
+}
+
+五、效果
+
+假设今天是：
+
+2025-01-10
+
+用户	end_date	结果
+userA 2025-03-01	✅ 创建	
+userB 2024-12-01	❌ 不创建	
+userC 2026-01-01	✅ 创建	
+六、进阶：顺带处理 subnet 绑定
+
+如果你还有：
+
+resource "azurerm_subnet_network_security_group_association" "this" {
+  for_each = local.valid_users
+
+  subnet_id                 = azurerm_subnet.this[each.key].id
+  network_security_group_id = azurerm_network_security_group.this[each.key].id
+}
+
+
+过期用户 → NSG 和绑定都会自动消失
+
+七、注意点（非常重要）
+1. Terraform 行为
+
+到期后：
+
+下次 apply
+
+资源会被 destroy
+
+2. 如果你“不想自动删已有”
+
+改成：
+
+valid_users = {
+  for k, v in var.users :
+  k => v
+  if local.today <= v.end_date || contains(keys(azurerm_network_security_group.this), k)
+}
+
+八、我帮你按你真实结构改
+
+你之前项目有：
+
+windows / legacy_windows
+
+subnet 条件创建
+
+aa.auto.tfvars
+
+你可以把：
+
+你现在的 users tfvars 结构
+
+你真实 NSG resource
+
+是否还要绑 subnet
+
+贴给我，我帮你改成：
+
+✔ 完全贴合你项目
+✔ 不破坏已有资源
+✔ 到期自动跳过 👍
