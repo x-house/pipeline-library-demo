@@ -178,3 +178,233 @@ resource "aws_wafv2_web_acl_association" "this" {
 
 
 
+=================
+目标：
+
+✅ WAF 日志 → S3
+✅ 自动过期删除（如 30/90 天）
+✅ 符合 AWS 要求：必须走 Firehose
+✅ 最小权限
+
+一、完整 Terraform（推荐版）
+1. S3 Bucket + 生命周期
+#####################################
+# S3 for WAF Logs
+#####################################
+resource "aws_s3_bucket" "waf_logs" {
+  bucket = "aws-waf-logs-${data.aws_caller_identity.current.account_id}"
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "waf" {
+  bucket = aws_s3_bucket.waf_logs.id
+
+  rule {
+    id     = "expire-waf-logs"
+    status = "Enabled"
+
+    expiration {
+      days = 90          # 👈 这里改保存天数
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+  }
+}
+
+2. IAM Role 给 Firehose
+#####################################
+# IAM for Firehose
+#####################################
+resource "aws_iam_role" "firehose" {
+  name = "waf-firehose-to-s3"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "firehose.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "firehose" {
+  role = aws_iam_role.firehose.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:PutObjectAcl"
+        ]
+        Resource = "${aws_s3_bucket.waf_logs.arn}/*"
+      }
+    ]
+  })
+}
+
+3. Kinesis Firehose（⚠ 名字必须 aws-waf-logs 开头）
+
+这是 AWS 强制要求
+
+#####################################
+# Firehose
+#####################################
+resource "aws_kinesis_firehose_delivery_stream" "waf" {
+
+  # ❗ 必须 aws-waf-logs- 开头
+  name        = "aws-waf-logs-alb"
+  destination = "s3"
+
+  s3_configuration {
+    role_arn   = aws_iam_role.firehose.arn
+    bucket_arn = aws_s3_bucket.waf_logs.arn
+
+    buffering_size     = 5
+    buffering_interval = 300
+    compression_format = "GZIP"
+  }
+}
+
+4. WebACL Logging（核心）
+#####################################
+# Enable WAF Logging
+#####################################
+resource "aws_wafv2_web_acl_logging_configuration" "this" {
+
+  resource_arn = aws_wafv2_web_acl.this.arn
+
+  log_destination_configs = [
+    aws_kinesis_firehose_delivery_stream.waf.arn
+  ]
+
+  # 安全：脱敏 token
+  redacted_fields {
+    single_header {
+      name = "authorization"
+    }
+  }
+
+  #####################################
+  # 只记录 BLOCK 日志（生产推荐）
+  #####################################
+  logging_filter {
+    default_behavior = "DROP"
+
+    filter {
+      behavior = "KEEP"
+
+      condition {
+        action_condition {
+          action = "BLOCK"
+        }
+      }
+
+      requirement = "MEETS_ANY"
+    }
+  }
+}
+
+二、效果
+1. S3 结构
+s3://aws-waf-logs-xxxx/
+└── AWSLogs/
+    └── account-id/
+        └── waf/
+
+2. 日志能看到
+
+源 IP
+
+URI / Query
+
+命中哪条 rule
+
+BLOCK 原因
+
+headers（已脱敏）
+
+
+
+
+
+
+
+===========================
+Terraform（S3 版我帮你精简一份）
+############################
+# S3 + 生命周期
+############################
+resource "aws_s3_bucket" "waf" {
+  bucket = "aws-waf-logs-${var.env}-${data.aws_caller_identity.current.account_id}"
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "waf" {
+  bucket = aws_s3_bucket.waf.id
+
+  rule {
+    id     = "expire"
+    status = "Enabled"
+
+    expiration {
+      days = var.env == "prod" ? 90 : 14
+    }
+  }
+}
+
+############################
+# Firehose（必须 aws-waf-logs-）
+############################
+resource "aws_kinesis_firehose_delivery_stream" "waf" {
+  name        = "aws-waf-logs-${var.env}"
+  destination = "s3"
+
+  s3_configuration {
+    role_arn   = aws_iam_role.firehose.arn
+    bucket_arn = aws_s3_bucket.waf.arn
+
+    compression_format = "GZIP"
+  }
+}
+
+############################
+# 开启 WAF Logging
+############################
+resource "aws_wafv2_web_acl_logging_configuration" "this" {
+
+  resource_arn = aws_wafv2_web_acl.this.arn
+
+  log_destination_configs = [
+    aws_kinesis_firehose_delivery_stream.waf.arn
+  ]
+
+  # 脱敏
+  redacted_fields {
+    single_header {
+      name = "authorization"
+    }
+  }
+
+  # 生产只记录 BLOCK
+  logging_filter {
+    default_behavior = var.env == "prod" ? "DROP" : "KEEP"
+
+    filter {
+      behavior = "KEEP"
+      condition {
+        action_condition {
+          action = "BLOCK"
+        }
+      }
+      requirement = "MEETS_ANY"
+    }
+  }
+}
+
+
