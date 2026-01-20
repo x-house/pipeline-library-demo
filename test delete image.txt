@@ -1,0 +1,90 @@
+############################
+# 配置
+############################
+$resourceGroup = "your-rg"
+$galleryName   = "your-gallery"
+
+$thresholdDate = (Get-Date).AddDays(-90)
+
+$minKeep       = 2       # 👈 可配置：最少保留几个
+$dryRun        = $true   # 先测试
+
+############################
+# 1. 获取所有 image version
+############################
+$images = az sig image-version list `
+  -g $resourceGroup `
+  -r $galleryName `
+  --query "[].{name:name, id:id, definition:storageProfile.imageDefinitionId}" `
+  -o json | ConvertFrom-Json
+
+############################
+# 2. 按 Image Definition 分组
+############################
+$grouped = $images | Group-Object definition
+
+foreach ($group in $grouped) {
+
+    Write-Host "`n======================================="
+    Write-Host "Definition: $($group.Name)"
+    Write-Host "Total versions: $($group.Count)"
+
+    # 解析日期
+    $parsed = foreach ($img in $group.Group) {
+
+        $digits = $img.name -replace '\D',''
+
+        if ($digits.Length -lt 8) { continue }
+
+        try {
+            $imgDate = [datetime]::ParseExact(
+                $digits.Substring(0,8),
+                "yyyyMMdd",
+                $null
+            )
+
+            [PSCustomObject]@{
+                Name    = $img.name
+                Id      = $img.id
+                Date    = $imgDate
+            }
+        }
+        catch {}
+    }
+
+    # 按日期排序（新→旧）
+    $sorted = $parsed | Sort-Object Date -Descending
+
+    Write-Host "Valid parsed images: $($sorted.Count)"
+
+    ############################
+    # 3. 保留策略
+    ############################
+
+    # ① 先保留最新 N 个
+    $keep = $sorted | Select-Object -First $minKeep
+
+    # ② 剩余的才考虑90天
+    $candidates = $sorted | Select-Object -Skip $minKeep
+
+    $toDelete = $candidates | Where-Object {
+        $_.Date -lt $thresholdDate
+    }
+
+    ############################
+    # 4. 执行删除
+    ############################
+
+    foreach ($d in $toDelete) {
+
+        Write-Host "Delete candidate: $($d.Name) date=$($d.Date)"
+
+        if ($dryRun) {
+            Write-Host "  [DRYRUN] would delete"
+        }
+        else {
+            az sig image-version delete --ids $d.Id
+            Write-Host "  Deleted"
+        }
+    }
+}
