@@ -88,3 +88,41 @@ foreach ($group in $grouped) {
         }
     }
 }
+
+
+
+-------------------------------------------------------
+-----------------------------------------------
+function Convert-ImageDate {
+
+    param($name)
+
+    # 25.10.10224518
+    $parts = $name -split '\.'
+    if ($parts.Count -lt 3) { return $null }
+
+    $yy = [int]$parts[0]
+    $MM = [int]$parts[1]
+    $dd = [int]($parts[2].Substring(0,2))
+
+    # ===== 核心安全逻辑 =====
+
+    # 以当前世纪为基准
+    $currentYear = (Get-Date).Year
+    $century     = [math]::Floor($currentYear / 100) * 100
+
+    $year = $century + $yy
+
+    # 如果算出来比当前还大 2 年以上 → 说明是上个世纪
+    if ($year -gt ($currentYear + 2)) {
+        $year -= 100
+    }
+
+    try {
+        return Get-Date -Year $year -Month $MM -Day $dd
+    }
+    catch {
+        return $null
+    }
+}
+
