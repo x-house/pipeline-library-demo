@@ -93,36 +93,177 @@ foreach ($group in $grouped) {
 
 -------------------------------------------------------
 -----------------------------------------------
-function Convert-ImageDate {
+############################
+# 安全日期解析函数
+############################
+function Convert-ImageDate($name) {
 
-    param($name)
-
-    # 25.10.10224518
     $parts = $name -split '\.'
     if ($parts.Count -lt 3) { return $null }
 
-    $yy = [int]$parts[0]
-    $MM = [int]$parts[1]
-    $dd = [int]($parts[2].Substring(0,2))
+    try {
+        $yy = [int]$parts[0]
+        $MM = [int]$parts[1]
+        $dd = [int]($parts[2].Substring(0,2))
+    }
+    catch {
+        return $null
+    }
 
-    # ===== 核心安全逻辑 =====
-
-    # 以当前世纪为基准
     $currentYear = (Get-Date).Year
     $century     = [math]::Floor($currentYear / 100) * 100
 
     $year = $century + $yy
 
-    # 如果算出来比当前还大 2 年以上 → 说明是上个世纪
     if ($year -gt ($currentYear + 2)) {
         $year -= 100
     }
 
     try {
-        return Get-Date -Year $year -Month $MM -Day $dd
+        Get-Date -Year $year -Month $MM -Day $dd
     }
     catch {
-        return $null
+        $null
     }
 }
 
+############################
+# 解析
+############################
+$parsed = foreach ($img in $group.Group) {
+
+    $imgDate = Convert-ImageDate $img.name
+
+    if (-not $imgDate) {
+        Write-Host "Skip invalid name: $($img.name)"
+        continue
+    }
+
+    [PSCustomObject]@{
+        Name = $img.name
+        Id   = $img.id
+        Date = $imgDate
+    }
+}
+五、我帮你做自动测试脚本
+你本地直接跑：
+
+powershell
+Copy code
+$tests = @(
+ "25.01.01220000",
+ "24.12.31235959",
+ "24.02.29220000",
+ "23.02.29220000",
+ "99.01.01220000",
+ "00.01.01220000",
+ "ab.xx.yy"
+)
+
+foreach ($t in $tests) {
+    "$t => $(Convert-ImageDate $t)"
+}
+
+
+
+
+
+
+
+
+
+
+
+--------------------------------
+20000
+############################
+# 配置
+############################
+$resourceGroup = "your-rg"
+$galleryName   = "your-gallery"
+
+$thresholdDate = (Get-Date).AddDays(-90)
+
+$minKeep       = 2
+$dryRun        = $true
+
+############################
+# 1. 获取所有 image version
+############################
+$images = az sig image-version list `
+  -g $resourceGroup `
+  -r $galleryName `
+  --query "[].{name:name, id:id, definition:storageProfile.imageDefinitionId}" `
+  -o json | ConvertFrom-Json
+
+############################
+# 2. 按 Definition 分组（Linux/Windows天然分开）
+############################
+$grouped = $images | Group-Object definition
+
+foreach ($group in $grouped) {
+
+    Write-Host "`n===== Definition: $($group.Name) ====="
+    Write-Host "Total versions: $($group.Count)"
+
+    ############################
+    # 日期解析（适配 25.10.10224518）
+    ############################
+    $parsed = foreach ($img in $group.Group) {
+
+        try {
+            $parts = $img.name -split '\.'
+
+            if ($parts.Count -lt 3) { continue }
+
+            $yy = [int]$parts[0]
+            $MM = [int]$parts[1]
+            $dd = [int]($parts[2].Substring(0,2))
+
+            $year = 2000 + $yy
+
+            $imgDate = Get-Date -Year $year -Month $MM -Day $dd
+
+            [PSCustomObject]@{
+                Name = $img.name
+                Id   = $img.id
+                Date = $imgDate
+            }
+        }
+        catch {
+            Write-Host "Skip invalid name: $($img.name)"
+        }
+    }
+
+    $sorted = $parsed | Sort-Object Date -Descending
+
+    Write-Host "Valid parsed: $($sorted.Count)"
+
+    ############################
+    # 保留策略
+    ############################
+
+    $keep = $sorted | Select-Object -First $minKeep
+
+    $candidates = $sorted | Select-Object -Skip $minKeep
+
+    $toDelete = $candidates | Where-Object {
+        $_.Date -lt $thresholdDate
+    }
+
+    ############################
+    # 删除
+    ############################
+    foreach ($d in $toDelete) {
+
+        Write-Host "Delete candidate: $($d.Name) date=$($d.Date)"
+
+        if ($dryRun) {
+            Write-Host "  [DRYRUN] would delete"
+        }
+        else {
+            az sig image-version delete --ids $d.Id --yes
+            Write-Host "  Deleted"
+        }
+    }
+}
