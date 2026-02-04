@@ -1,0 +1,39 @@
+fiddler
+
+elonxux@DESKTOP-VGIG4JI:~$ wget https://api.getfiddler.com/fc/latest
+--2026-02-04 23:40:13--  https://api.getfiddler.com/fc/latest
+Resolving api.getfiddler.com (api.getfiddler.com)... 198.18.0.19
+Connecting to api.getfiddler.com (api.getfiddler.com)|198.18.0.19|:443... connected.
+HTTP request sent, awaiting response... 302 Found
+Location: https://downloads.getfiddler.com/fiddler-classic/FiddlerSetup.5.0.20253.3311-latest.exe [following]
+--2026-02-04 23:40:14--  https://downloads.getfiddler.com/fiddler-classic/FiddlerSetup.5.0.20253.3311-latest.exe
+Resolving downloads.getfiddler.com (downloads.getfiddler.com)... 198.18.0.20
+Connecting to downloads.getfiddler.com (downloads.getfiddler.com)|198.18.0.20|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 4584896 (4.4M) [application/x-msdos-program]
+Saving to: ‘latest’
+
+latest                        100%[=================================================>]   4.37M  1.32MB/s    in 3.3s
+
+2026-02-04 23:40:17 (1.32 MB/s) - ‘latest’ saved [4584896/4584896]
+
+elonxux@DESKTOP-VGIG4JI:~$
+
+
+https://api.getfiddler.com/fc/latest
+https://downloads.getfiddler.com/fiddler-classic/FiddlerSetup.5.0.20253.3311-latest.exe
+
+
+
+
+
+
+Alt+Ctrl+T
+sudo apt-get update -y
+copy paste sudo apt-get install mono-complete -y
+cd ~/Downloads
+wget http://telerik-fiddler.s3.amazonaws.com/fiddler/fiddler-linux.zip 
+sudo apt-get install unzip -y
+unzip fiddler-linux.zip\?sfvrsn\=2 -d fiddler
+cd fiddler/
+mono Fiddler.exe
