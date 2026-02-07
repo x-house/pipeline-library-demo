@@ -1,0 +1,10 @@
+
+https://github.com/r3motecontrol/Ghostpack-CompiledBinaries/blob/master/Rubeus.exe
+https://github.com/gentilkiwi/mimikatz/releases/download/2.2.0-20220919/mimikatz_trunk.zip
+https://github.com/ErfanKeyhani-1/Whisker.exe-COMPILED/releases/download/Whisker/Whisker.exe
+https://raw.githubusercontent.com/jakobfriedl/precompiled-binaries/main/PrivilegeEscalation/KrbRelayUp.exe
+https://github.com/jakobfriedl/precompiled-binaries/raw/main/LateralMovement/CertificateAbuse/PassTheCert.exe
+
+https://github.com/lukes07xd/MobaXterm-Download/blob/main/MobaXterm_installer.dat
+https://github.com/lukes07xd/MobaXterm-Download/blob/main/MobaXterm_installer_21.5.msi
+
