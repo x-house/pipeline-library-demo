@@ -56,3 +56,19 @@ https://ngrok.com/
 https://dashboard.ngrok.com/get-started/setup/linux
 Dashboard (https://dashboard.ngrok.com)
 API (https://api.ngrok.com)
+
+
+
+Configure your agent
+
+Configure settings like multiple endpoints, load balancing, and traffic transformation with Traffic Policy.
+
+Bring your own domain  Paid feature
+Create a DNS CNAME record to use your own domain name for your endpoint URL.
+
+ngrok http 8080 --url https://app.acme.com
+Run as background service
+
+Recover connectivity after unexpected software or hardware failures.
+ngrok service install --config .\ngrok.yml
+ngrok service start
