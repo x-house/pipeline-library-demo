@@ -30,16 +30,16 @@ https://bin.ngrok.com/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
 https://dashboard.ngrok.com/get-started/setup/windows
 hdxulonghua@gmail.com
 
-3ErDrEmoCzPgImRrlIXIHxM0hP9_2zR45YJSc2op3GPRgDJ5X
-ngrok config add-authtoken 3ErDrEmoCzPgImRrlIXIHxM0hP9_2zR45YJSc2op3GPRgDJ5X
+3ErDrEmoCzxxxxxxxxxxxxxxxxxx
+ngrok config add-authtoken 3ErDrEmoCzxxxxxxxxxxxxxxxxxx
 
 ngrok.yml
 version: 3
 agent:
-  authtoken: 3ErDrEmoCzPgImRrlIXIHxM0hP9_2zR45YJSc2op3GPRgDJ5X
+  authtoken: 3ErDrEmoCzxxxxxxxxxxxxxxxxxx
 
 
-export NGROK_AUTHTOKEN=3ErDrEmoCzPgImRrlIXIHxM0hP9_2zR45YJSc2op3GPRgDJ5X
+export NGROK_AUTHTOKEN=3ErDrEmoCzxxxxxxxxxxxxxxxxxx
 
 
 https://bin.ngrok.com/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip
