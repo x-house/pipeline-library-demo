@@ -72,3 +72,6 @@ Run as background service
 Recover connectivity after unexpected software or hardware failures.
 ngrok service install --config .\ngrok.yml
 ngrok service start
+
+
+M0VyU2FzRW9uMVNhcWpxS1RqcsWmpNbFN4XzZRRkRXWlpLQ0dDZ2liNFJiR0tjWgo=
