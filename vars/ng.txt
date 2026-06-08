@@ -49,3 +49,10 @@ https://github.com/ajiBal/nal
 https://raw.githubusercontent.com/KasRoudra/IP-Tracker/main/ip.sh
 https://github.com/KasRoudra2/maxfiles/releases
 https://gist.github.com/mudssrali/acfb8b57e5847c7308e1064a739971da
+
+
+
+https://ngrok.com/
+https://dashboard.ngrok.com/get-started/setup/linux
+Dashboard (https://dashboard.ngrok.com)
+API (https://api.ngrok.com)
