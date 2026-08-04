@@ -1,0 +1,858 @@
+如果目标是把 OpenCode / Codex / Claude Code 产生的 session 日志做不可篡改（Immutable Storage / WORM）归档，企业里通常不会让这些工具直接写 Azure Immutable Storage，而是设计一个日志采集 + 固化归档链路。
+
+一个典型架构：
+
+OpenCode
+Codex CLI/Desktop
+Claude Code
+        |
+        |
+        | session 文件(JSON/JSONL)
+        |
+        v
+本地采集 Agent
+(Fluent Bit / Vector / Filebeat)
+        |
+        |
+        v
+日志处理层
+(脱敏 + 格式标准化 + 加密)
+        |
+        |
+        v
+Azure Storage
+(Blob Storage)
+        |
+        |
+        v
+Immutable Blob Storage
+(WORM Policy)
+1. Azure 推荐方案
+
+使用：
+
+Microsoft Azure Blob Storage + Immutable Storage
+
+例如：
+
+Storage Account
+ |
+ +-- container: ai-session-audit
+       |
+       +-- 2026/
+            |
+            +--08/
+              |
+              +--codex/
+              +--claude-code/
+              +--opencode/
+
+开启：
+
+Blob versioning（可选）
+Soft delete（可选）
+Immutable policy（核心）
+2. Immutable Storage 两种模式
+
+Azure Blob Immutable 有两个模式：
+
+Time-based retention
+
+例如：
+
+Retention:
+7 years
+
+效果：
+
+上传文件
+    |
+    |
+7年内:
+ ❌ delete
+ ❌ overwrite
+
+适合：
+
+审计
+合规
+金融
+Legal Hold
+
+例如：
+
+Legal Hold:
+AI-Audit-Investigation
+
+直到解除：
+
+不能删除
+不能修改
+3. OpenCode / Codex / Claude Code session 文件位置
+
+大概：
+
+Codex
+
+类似：
+
+~/.codex/sessions/*.jsonl
+Claude Code
+
+类似：
+
+~/.claude/projects/
+
+里面：
+
+*.jsonl
+OpenCode
+
+类似：
+
+~/.opencode/
+
+或者：
+
+~/.local/share/opencode/
+
+通常也是 JSON / JSONL。
+
+4. 不建议直接同步 ~/.xxx
+
+不要：
+
+~/.codex
+      |
+      |
+      +---- Azure Blob
+
+原因：
+
+session 里面可能有：
+
+API Key
+token
+source code
+command output
+内部 IP
+用户信息
+
+应该：
+
+session
+   |
+   |
+collector
+   |
+   |
+redaction
+   |
+   |
+immutable storage
+5. 采集工具选择
+方案A：Azure Monitor Agent + DCR
+
+适合：
+
+已经有 Azure Monitor。
+
+流程：
+
+session jsonl
+       |
+       |
+AMA
+       |
+       |
+Log Analytics
+       |
+       |
+Archive Export
+       |
+       |
+Immutable Blob
+
+优点：
+
+Azure 原生
+RBAC
+Sentinel 集成
+
+缺点：
+
+不是实时 WORM。
+
+方案B：Fluent Bit（我更推荐）
+
+架构：
+
+              +-------------+
+Codex ------->|             |
+Claude ------>| Fluent Bit  |
+OpenCode ---->|             |
+              +-------------+
+                    |
+                    |
+              Azure Blob Output
+                    |
+                    |
+          Immutable Container
+
+Fluent Bit 支持：
+
+tail jsonl
+multiline
+filter
+encryption
+retry
+
+配置思路：
+
+[INPUT]
+    Name tail
+    Path /home/*/.codex/sessions/*.jsonl
+
+
+[FILTER]
+    Name lua
+    script redact.lua
+
+
+[OUTPUT]
+    Name azure_blob
+    container_name ai-session-audit
+6. 防止日志被客户端删除
+
+关键：
+
+不要让开发机器拥有 Blob 写权限。
+
+正确：
+
+Developer laptop
+        |
+        |
+        v
+Collector identity
+        |
+        |
+        v
+Azure Managed Identity
+        |
+        |
+        v
+Blob Storage
+
+权限：
+
+Collector：
+
+Storage Blob Data Contributor
+
+管理员：
+
+Storage Blob Data Reader
+
+开发者：
+
+No access
+7. 增加 Hash 防篡改
+
+很多企业会额外保存：
+
+session.jsonl
+
+SHA256:
+abc123456789
+
+例如：
+
+ai-session/
+ |
+ +--session.jsonl
+ |
+ +--session.jsonl.sha256
+
+验证：
+
+sha256sum session.jsonl
+
+得到：
+
+e3b0c44298...
+
+上传：
+
+Blob Immutable
+
+以后：
+
+hash != stored hash
+
+=> 文件被修改
+8. 更完整企业架构
+
+如果是 AI Agent Governance：
+
+                 User
+                  |
+                  |
+        +----------------+
+        | AI Coding Tool |
+        |                |
+        | Codex          |
+        | Claude Code    |
+        | OpenCode       |
+        +----------------+
+                  |
+                  |
+            session jsonl
+                  |
+                  |
+        +----------------+
+        | Collector      |
+        | Fluent Bit     |
+        +----------------+
+                  |
+                  |
+          +---------------+
+          | Redaction     |
+          | DLP           |
+          +---------------+
+                  |
+                  |
+        +----------------+
+        | Azure Blob     |
+        | Immutable WORM |
+        +----------------+
+                  |
+                  |
+             Sentinel
+9. 如果是 Kubernetes / 企业环境
+
+你之前有 Kubernetes、AKS 背景的话，更推荐：
+
+AI Agent Pod
+      |
+stdout/file
+      |
+Fluent Bit DaemonSet
+      |
+Azure Blob Immutable
+      |
+Sentinel
+
+和现在 Kubernetes 日志架构一致。
+
+总结：
+
+对于 OpenCode + Codex + Claude Code session 审计归档，推荐：
+
+Fluent Bit / OpenTelemetry Collector → 脱敏 → Azure Blob Storage Immutable Policy
+
+不要：
+
+工具 session 文件 → 直接挂载 Blob/NFS → Immutable
+
+因为：
+
+容易泄露敏感数据
+不利于审计
+文件修改检测弱
+权限边界不好控制
+
+这个架构也符合企业做 AI Coding Assistant Governance / AI Agent Audit Trail 的常见设计。
+
+               User
+                  |
+                  |
+        +----------------+
+        | AI Coding Tool |
+        |                |
+        | Codex          |
+        | Claude Code    |
+        | OpenCode       |
+        +----------------+
+                  |
+                  |
+            session jsonl
+                  |
+                  |
+        +----------------+
+        | Collector      |
+        | Fluent Bit     |
+        +----------------+
+                  |
+                  |
+          +---------------+
+          | Redaction     |
+          | DLP           |
+          +---------------+
+                  |
+                  |
+        +----------------+
+        | Azure Blob     |
+        | Immutable WORM |
+        +----------------+
+                  |
+                  |
+             Sentinel
+
+这个具体怎么实现，给出具体配置
+
+这个架构可以落地，下面给一个比较接近生产环境的实现方案：
+
+目标：
+
+采集：
+Codex session
+Claude Code session
+OpenCode session
+脱敏：
+API Key
+Token
+Password
+Private Key
+归档：
+Azure Blob Immutable WORM
+审计：
+Microsoft Sentinel
+
+整体：
+
+Developer VM
+(Ubuntu)
+
+~/.codex/sessions/*.jsonl
+~/.claude/projects/**/*.jsonl
+~/.opencode/**/*.jsonl
+
+          |
+          |
+          v
+
+Fluent Bit
+(tail input)
+
+          |
+          |
+          v
+
+Lua Filter
+(redaction)
+
+          |
+          |
+          v
+
+Azure Blob Output
+
+          |
+          |
+          v
+
+Blob Container
+Immutable Policy
+
+          |
+          |
+          v
+
+Sentinel
+1. Azure Blob 创建 Immutable Storage
+创建 Storage Account
+
+例如：
+
+az storage account create \
+ --name aicodelogstorage \
+ --resource-group rg-ai-audit \
+ --location eastus \
+ --sku Standard_GRS \
+ --kind StorageV2
+
+开启 immutable 支持：
+
+az storage account blob-service-properties update \
+ --account-name aicodelogstorage \
+ --resource-group rg-ai-audit \
+ --enable-versioning true \
+ --enable-delete-retention true
+创建 Container
+az storage container create \
+ --account-name aicodelogstorage \
+ --name ai-session-audit
+设置 WORM
+
+例如保存 7 年：
+
+az storage container immutability-policy create \
+ --account-name aicodelogstorage \
+ --container-name ai-session-audit \
+ --period 2555
+
+2555天≈7年。
+
+之后：
+
+Blob
+
+delete ❌
+overwrite ❌
+modify ❌
+2. 安装 Fluent Bit
+
+Ubuntu：
+
+curl https://raw.githubusercontent.com/fluent/fluent-bit/master/install.sh | sh
+
+检查：
+
+systemctl status fluent-bit
+3. 创建 Fluent Bit 输入
+
+假设用户：
+
+/home/user01
+
+创建：
+
+/etc/fluent-bit/conf.d/ai-session.conf
+Input
+[INPUT]
+    Name tail
+
+    Path /home/*/.codex/sessions/*.jsonl
+
+    Tag codex.session
+
+    Parser json
+
+    DB /var/lib/fluent-bit/codex.db
+
+    Mem_Buf_Limit 50MB
+
+    Skip_Long_Lines On
+
+Claude：
+
+[INPUT]
+    Name tail
+
+    Path /home/*/.claude/projects/**/*.jsonl
+
+    Tag claude.session
+
+    Parser json
+
+    DB /var/lib/fluent-bit/claude.db
+
+OpenCode：
+
+[INPUT]
+    Name tail
+
+    Path /home/*/.opencode/**/*.jsonl
+
+    Tag opencode.session
+
+    Parser json
+
+    DB /var/lib/fluent-bit/opencode.db
+4. JSON Parser
+
+创建：
+
+/etc/fluent-bit/parsers.conf
+
+增加：
+
+[PARSER]
+    Name json
+    Format json
+5. 脱敏 Filter
+
+创建：
+
+/etc/fluent-bit/redact.lua
+
+内容：
+
+function redact(tag, timestamp, record)
+
+
+    local msg = record["content"]
+
+    if msg == nil then
+        return 1,timestamp,record
+    end
+
+
+    -- OpenAI key
+    msg = string.gsub(
+        msg,
+        "sk%-[%w]+",
+        "[OPENAI_KEY]"
+    )
+
+
+    -- Github token
+    msg = string.gsub(
+        msg,
+        "ghp_[%w]+",
+        "[GITHUB_TOKEN]"
+    )
+
+
+    -- Bearer token
+    msg = string.gsub(
+        msg,
+        "Bearer%s+[%w%.%-_]+",
+        "Bearer [TOKEN]"
+    )
+
+
+    -- password
+    msg = string.gsub(
+        msg,
+        "password=[^ ]+",
+        "password=[REDACTED]"
+    )
+
+
+    -- private key
+
+    msg = string.gsub(
+        msg,
+        "-----BEGIN PRIVATE KEY-----.+-----END PRIVATE KEY-----",
+        "[PRIVATE_KEY]"
+    )
+
+
+    record["content"]=msg
+
+
+    return 1,timestamp,record
+
+end
+6. Fluent Bit Filter
+
+配置：
+
+[FILTER]
+    Name lua
+
+    Match *
+
+    script /etc/fluent-bit/redact.lua
+
+    call redact
+
+现在：
+
+输入：
+
+{
+"type":"user_message",
+"content":
+"export OPENAI_KEY=sk-abcd1234"
+}
+
+输出：
+
+{
+"type":"user_message",
+"content":
+"export OPENAI_KEY=[OPENAI_KEY]"
+}
+7. 输出 Azure Blob
+
+Fluent Bit Azure Blob 插件：
+
+安装：
+
+sudo apt install fluent-bit-azure
+
+配置：
+
+[OUTPUT]
+
+Name azure_blob
+
+Match *
+
+account_name aicodelogstorage
+
+container_name ai-session-audit
+
+path ai-agent/%Y/%m/%d/
+
+compression gzip
+
+目录结果：
+
+ai-session-audit
+
+ |
+ +-- ai-agent
+       |
+       +--2026
+          |
+          +--08
+             |
+             +--04
+
+                 codex.session.gz
+                 claude.session.gz
+                 opencode.session.gz
+8. 使用 Managed Identity（生产推荐）
+
+不要：
+
+Storage Account Key
+
+不要：
+
+SAS Token
+
+使用：
+
+VM Managed Identity
+
+授权：
+
+az role assignment create \
+ --assignee <managed-id> \
+ --role "Storage Blob Data Contributor" \
+ --scope \
+ /subscriptions/.../storageAccounts/aicodelogstorage
+9. 接入 Sentinel
+
+Azure:
+
+Microsoft Sentinel
+       |
+       |
+Data Connector
+       |
+       |
+Storage Account
+
+或者：
+
+Blob
+ |
+Event Grid
+ |
+Function
+ |
+Log Analytics
+ |
+Sentinel
+Function 示例
+
+Blob 新文件：
+
+ai-agent/2026/08/04/session.jsonl.gz
+
+触发：
+
+Azure Function
+
+解析：
+
+import json
+
+
+def main(blob):
+
+    for line in blob.readlines():
+
+        event=json.loads(line)
+
+        send_to_loganalytics(event)
+10. Sentinel 查询
+
+进入 Log Analytics：
+
+AIAgentSession_CL
+| where type=="tool_call"
+| project TimeGenerated,
+          user,
+          command
+
+例如发现：
+
+sudo rm -rf /
+
+触发 Alert。
+
+生产增强建议
+加 Hash
+
+上传前：
+
+session.jsonl
+
+sha256:
+abcxxxx
+
+一起保存：
+
+blob:
+
+session.jsonl
+session.jsonl.sha256
+加用户身份
+
+采集时增加：
+
+hostname
+username
+device_id
+
+例如：
+
+{
+"user":"john",
+"device":"dev-laptop-01",
+"tool":"codex",
+"type":"assistant_message"
+}
+最终生产版本建议
+
+对于企业：
+
+Codex
+Claude Code
+OpenCode
+
+      |
+      |
+Fluent Bit
+      |
+      |
+Lua DLP Filter
+      |
+      |
+Azure Blob Immutable
+      |
+      |
+Event Grid
+      |
+      |
+Log Analytics
+      |
+      |
+Sentinel
+
+这个方案可以满足：
+
+AI Coding Assistant 审计
+合规留存
+防删除
+Prompt/Tool Call追踪
+Insider Risk 分析
+
+如果是在企业 Azure 环境，我会进一步把 Fluent Bit 换成 OpenTelemetry Collector + Azure Monitor DCR，因为和 Sentinel/Defender 集成会更原生。
