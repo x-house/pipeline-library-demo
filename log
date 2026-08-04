@@ -1,0 +1,871 @@
+可以，Azure Monitor Agent（AMA, Azure Monitor Agent）可以采集文件日志，但不是直接通过 AMA 核心功能配置，而是通过 Data Collection Rule（DCR，数据收集规则）里的 Custom Text Logs（自定义文本日志） 来实现。
+
+适合采集：
+
+/var/log/*.log
+应用日志
+自定义 JSON 日志
+Codex session 这种 .jsonl 文件
+1. AMA 采集 Codex session 文件是否可行？
+
+例如：
+
+~/.codex/sessions/session-xxx.jsonl
+
+内容：
+
+{"type":"user_message","content":"hello"}
+{"type":"assistant_message","content":"hi"}
+
+可以采集。
+
+流程：
+
+Linux VM
+ |
+ |  AMA Agent
+ |
+ |  Data Collection Rule
+ |
+ |  Custom Text Logs
+ |
+ v
+Log Analytics Workspace
+ |
+ v
+KQL 查询
+2. 前提条件
+
+你的机器需要：
+
+安装：
+
+azure-monitor-agent
+
+检查：
+
+systemctl status azuremonitoragent
+
+一般 Azure VM Extension：
+
+AzureMonitorLinuxAgent
+
+会自动安装。
+
+3. 配置 Custom Text Logs
+
+例如采集：
+
+/home/user01/.codex/sessions/*.jsonl
+
+DCR 配置：
+
+{
+  "dataSources": {
+    "logFiles": [
+      {
+        "streams": [
+          "Custom-CodexSession_CL"
+        ],
+        "filePatterns": [
+          "/home/user01/.codex/sessions/*.jsonl"
+        ],
+        "format": "text",
+        "settings": {
+          "text": {
+            "recordStartTimestampFormat": "ISO 8601"
+          }
+        }
+      }
+    ]
+  }
+}
+4. 在 Log Analytics 查询
+
+发送后：
+
+Custom-CodexSession_CL
+| limit 50
+
+可能看到：
+
+RawData
+--------
+{"type":"user_message","content":"hello"}
+
+{"type":"assistant_message","content":"hi"}
+5. JSONL 推荐处理方式
+
+因为 Codex session 是：
+
+一行 JSON：
+
+{
+"type":"assistant_message",
+"content":"xxx"
+}
+
+AMA 只负责收集，不解析 JSON。
+
+推荐：
+
+方法1：KQL 解析
+
+例如：
+
+Custom-CodexSession_CL
+| extend json=parse_json(RawData)
+| extend Type=json.type
+| extend Message=json.content
+| project TimeGenerated,Type,Message
+
+结果：
+
+Time	Type	Message
+10:01	user_message	hello
+10:02	assistant_message	hi
+方法2：Logstash / Fluent Bit
+
+如果需要：
+
+字段拆分
+enrichment
+多租户
+
+可以：
+
+Codex jsonl
+      |
+ Fluent Bit
+      |
+ Azure Monitor
+6. 一个重要限制
+
+AMA Custom Text Logs：
+
+支持：
+
+✅ 普通文本
+✅ JSONL
+✅ log 文件持续追加
+
+但是：
+
+❌ 不适合采集大量历史文件
+❌ 不会自动解析 JSON schema
+❌ 文件轮转需要注意
+
+例如：
+
+session-001.jsonl
+session-002.jsonl
+session-003.jsonl
+
+可以匹配：
+
+*.jsonl
+
+但是：
+
+如果文件被 rename：
+
+session.jsonl
+        |
+        mv session-old.jsonl
+        |
+        new session.jsonl
+
+可能需要测试采集行为。
+
+7. 更适合 Codex session 的架构
+
+如果你的目标是做 AI Agent 审计：
+
+我会设计：
+
+Codex CLI/Desktop
+        |
+        |
+ ~/.codex/sessions/*.jsonl
+        |
+        |
+ AMA
+        |
+        |
+ Data Collection Rule
+        |
+        |
+ Log Analytics
+        |
+        |
+ KQL
+        |
+        |
+ Sentinel / Dashboard
+
+可以做：
+
+谁调用 AI
+输入 Prompt
+AI 输出
+Tool call
+Shell 命令
+Git 操作审计
+
+结合你之前问过 MCP / AI Agent / 安全扫描 / Azure 日志方案，这个场景其实很适合用 AMA + DCR + Sentinel 做 AI Agent 操作审计（AI governance）。你只需要注意 session 文件里面可能包含代码、密钥、Prompt 等敏感信息，生产环境采集前最好做脱敏。
+
+，生产环境采集前最好做脱敏  怎么脱敏
+
+如果要把 Codex session / AI Agent session 日志采集到 Azure Monitor / Sentinel，脱敏一般放在采集之前，不要等进入 Log Analytics 后再处理。
+
+原因：
+
+Codex session
+      |
+      | 可能包含：
+      | - API Key
+      | - Password
+      | - Token
+      | - 用户数据
+      | - 源代码
+      |
+      v
+脱敏
+      |
+      v
+AMA
+      |
+      v
+Log Analytics / Sentinel
+方案1（推荐）：采集前增加脱敏脚本
+
+例如 Codex session：
+
+{"type":"user_message","content":"my password is P@ssw0rd123"}
+
+转换：
+
+{"type":"user_message","content":"my password is [REDACTED]"}
+Linux 使用 rsyslog / Fluent Bit / Vector
+
+企业环境比较常用：
+
+Codex jsonl
+     |
+     |
+ Fluent Bit
+     |
+     | filter modify
+     |
+ Azure Monitor
+方案2：Fluent Bit 脱敏（推荐生产）
+
+安装 Fluent Bit：
+
+sudo apt install fluent-bit
+
+配置：
+
+[FILTER]
+    Name    lua
+    Match   *
+    script  redact.lua
+    call    redact
+
+redact.lua
+
+function redact(tag, timestamp, record)
+
+    local msg = record["log"]
+
+    if msg ~= nil then
+
+        msg = string.gsub(
+            msg,
+            "password=[^ ]+",
+            "password=[REDACTED]"
+        )
+
+        msg = string.gsub(
+            msg,
+            "api[_-]?key=[^ ]+",
+            "api_key=[REDACTED]"
+        )
+
+        record["log"] = msg
+    end
+
+    return 1, timestamp, record
+end
+
+效果：
+
+输入：
+
+api_key=sk-xxxxxx
+
+输出：
+
+api_key=[REDACTED]
+方案3：简单脚本定时生成安全日志
+
+例如：
+
+原始：
+
+~/.codex/sessions/
+
+不要让 AMA 直接读。
+
+创建：
+
+/var/log/codex-audit/
+
+流程：
+
+Codex session
+      |
+      |
+python redact.py
+      |
+      |
+/var/log/codex-audit/session.jsonl
+      |
+      |
+AMA
+
+Python例子：
+
+import json
+import re
+
+
+patterns = [
+    (
+        r"sk-[A-Za-z0-9]+",
+        "[OPENAI_KEY]"
+    ),
+    (
+        r"password\s*=\s*\S+",
+        "password=[REDACTED]"
+    ),
+    (
+        r"Bearer\s+\S+",
+        "Bearer [TOKEN]"
+    )
+]
+
+
+def redact(text):
+
+    for p,r in patterns:
+        text=re.sub(p,r,text)
+
+    return text
+
+
+with open("session.jsonl") as f, \
+     open("safe-session.jsonl","w") as out:
+
+    for line in f:
+        data=json.loads(line)
+
+        if "content" in data:
+            data["content"]=redact(
+                data["content"]
+            )
+
+        out.write(
+            json.dumps(data)+"\n"
+        )
+方案4：KQL 查询时脱敏（不推荐）
+
+例如：
+
+Custom_CodexSession_CL
+| extend Message =
+replace_regex(
+    RawData,
+    @"sk-[A-Za-z0-9]+",
+    "[KEY]"
+)
+
+问题：
+
+数据已经进入 Azure。
+
+如果：
+
+管理员
+Sentinel 用户
+导出权限
+
+仍然可能看到原始数据。
+
+常见需要脱敏的数据
+
+针对 Codex / AI Agent，我建议至少处理：
+
+1. API Key
+
+匹配：
+
+sk-xxxxxxxx
+ghp_xxxxxxxxx
+AKIAxxxxxxxx
+2. Token
+
+例如：
+
+Authorization: Bearer eyJxxx
+
+替换：
+
+Authorization: Bearer [TOKEN]
+3. 密码
+
+例如：
+
+password=xxxx
+passwd: xxxx
+pwd="xxxx"
+4. 私钥
+
+例如：
+
+-----BEGIN PRIVATE KEY-----
+xxxxx
+-----END PRIVATE KEY-----
+
+整个块替换：
+
+[PRIVATE_KEY]
+5. 数据库连接串
+
+例如：
+
+postgres://user:password@host/db
+
+替换：
+
+postgres://[USER]:[PASSWORD]@[HOST]/db
+6. PII
+
+例如：
+
+邮箱：
+
+test@example.com
+
+变：
+
+t***@example.com
+
+手机号：
+
+13812345678
+
+变：
+
+138****5678
+Azure 环境我更推荐的架构
+
+如果是企业 AI Agent 审计：
+
+                 +-------------+
+Codex Session -->| Redaction   |
+                 | Service     |
+                 +-------------+
+                       |
+                       |
+                 Sanitized JSONL
+                       |
+                       |
+                 Azure Monitor Agent
+                       |
+                       |
+              Log Analytics Workspace
+                       |
+                       |
+                  Sentinel
+
+另外一个点：Codex session 里面可能包含完整代码文件内容、命令输出、环境变量，简单正则脱敏往往不够。生产环境一般会做两层：
+
+规则脱敏（Regex）
+Key
+Token
+Password
+语义脱敏（LLM/DLP）
+源代码中的敏感逻辑
+客户数据
+内部架构信息
+
+如果你是想做 Azure + Codex + MCP Agent 的企业审计方案，通常会把脱敏层放在 AMA 前面的 Fluent Bit / OpenTelemetry Collector。这个架构和 Kubernetes 日志采集很类似。
+
+opencode , codex, claude code 产生的session 日志 怎么记录到imutable storage
+
+如果目标是把 OpenCode / Codex / Claude Code 产生的 session 日志做不可篡改（Immutable Storage / WORM）归档，企业里通常不会让这些工具直接写 Azure Immutable Storage，而是设计一个日志采集 + 固化归档链路。
+
+一个典型架构：
+
+OpenCode
+Codex CLI/Desktop
+Claude Code
+        |
+        |
+        | session 文件(JSON/JSONL)
+        |
+        v
+本地采集 Agent
+(Fluent Bit / Vector / Filebeat)
+        |
+        |
+        v
+日志处理层
+(脱敏 + 格式标准化 + 加密)
+        |
+        |
+        v
+Azure Storage
+(Blob Storage)
+        |
+        |
+        v
+Immutable Blob Storage
+(WORM Policy)
+1. Azure 推荐方案
+
+使用：
+
+Microsoft Azure Blob Storage + Immutable Storage
+
+例如：
+
+Storage Account
+ |
+ +-- container: ai-session-audit
+       |
+       +-- 2026/
+            |
+            +--08/
+              |
+              +--codex/
+              +--claude-code/
+              +--opencode/
+
+开启：
+
+Blob versioning（可选）
+Soft delete（可选）
+Immutable policy（核心）
+2. Immutable Storage 两种模式
+
+Azure Blob Immutable 有两个模式：
+
+Time-based retention
+
+例如：
+
+Retention:
+7 years
+
+效果：
+
+上传文件
+    |
+    |
+7年内:
+ ❌ delete
+ ❌ overwrite
+
+适合：
+
+审计
+合规
+金融
+Legal Hold
+
+例如：
+
+Legal Hold:
+AI-Audit-Investigation
+
+直到解除：
+
+不能删除
+不能修改
+3. OpenCode / Codex / Claude Code session 文件位置
+
+大概：
+
+Codex
+
+类似：
+
+~/.codex/sessions/*.jsonl
+Claude Code
+
+类似：
+
+~/.claude/projects/
+
+里面：
+
+*.jsonl
+OpenCode
+
+类似：
+
+~/.opencode/
+
+或者：
+
+~/.local/share/opencode/
+
+通常也是 JSON / JSONL。
+
+4. 不建议直接同步 ~/.xxx
+
+不要：
+
+~/.codex
+      |
+      |
+      +---- Azure Blob
+
+原因：
+
+session 里面可能有：
+
+API Key
+token
+source code
+command output
+内部 IP
+用户信息
+
+应该：
+
+session
+   |
+   |
+collector
+   |
+   |
+redaction
+   |
+   |
+immutable storage
+5. 采集工具选择
+方案A：Azure Monitor Agent + DCR
+
+适合：
+
+已经有 Azure Monitor。
+
+流程：
+
+session jsonl
+       |
+       |
+AMA
+       |
+       |
+Log Analytics
+       |
+       |
+Archive Export
+       |
+       |
+Immutable Blob
+
+优点：
+
+Azure 原生
+RBAC
+Sentinel 集成
+
+缺点：
+
+不是实时 WORM。
+
+方案B：Fluent Bit（我更推荐）
+
+架构：
+
+              +-------------+
+Codex ------->|             |
+Claude ------>| Fluent Bit  |
+OpenCode ---->|             |
+              +-------------+
+                    |
+                    |
+              Azure Blob Output
+                    |
+                    |
+          Immutable Container
+
+Fluent Bit 支持：
+
+tail jsonl
+multiline
+filter
+encryption
+retry
+
+配置思路：
+
+[INPUT]
+    Name tail
+    Path /home/*/.codex/sessions/*.jsonl
+
+
+[FILTER]
+    Name lua
+    script redact.lua
+
+
+[OUTPUT]
+    Name azure_blob
+    container_name ai-session-audit
+6. 防止日志被客户端删除
+
+关键：
+
+不要让开发机器拥有 Blob 写权限。
+
+正确：
+
+Developer laptop
+        |
+        |
+        v
+Collector identity
+        |
+        |
+        v
+Azure Managed Identity
+        |
+        |
+        v
+Blob Storage
+
+权限：
+
+Collector：
+
+Storage Blob Data Contributor
+
+管理员：
+
+Storage Blob Data Reader
+
+开发者：
+
+No access
+7. 增加 Hash 防篡改
+
+很多企业会额外保存：
+
+session.jsonl
+
+SHA256:
+abc123456789
+
+例如：
+
+ai-session/
+ |
+ +--session.jsonl
+ |
+ +--session.jsonl.sha256
+
+验证：
+
+sha256sum session.jsonl
+
+得到：
+
+e3b0c44298...
+
+上传：
+
+Blob Immutable
+
+以后：
+
+hash != stored hash
+
+=> 文件被修改
+8. 更完整企业架构
+
+如果是 AI Agent Governance：
+
+                 User
+                  |
+                  |
+        +----------------+
+        | AI Coding Tool |
+        |                |
+        | Codex          |
+        | Claude Code    |
+        | OpenCode       |
+        +----------------+
+                  |
+                  |
+            session jsonl
+                  |
+                  |
+        +----------------+
+        | Collector      |
+        | Fluent Bit     |
+        +----------------+
+                  |
+                  |
+          +---------------+
+          | Redaction     |
+          | DLP           |
+          +---------------+
+                  |
+                  |
+        +----------------+
+        | Azure Blob     |
+        | Immutable WORM |
+        +----------------+
+                  |
+                  |
+             Sentinel
+9. 如果是 Kubernetes / 企业环境
+
+你之前有 Kubernetes、AKS 背景的话，更推荐：
+
+AI Agent Pod
+      |
+stdout/file
+      |
+Fluent Bit DaemonSet
+      |
+Azure Blob Immutable
+      |
+Sentinel
+
+和现在 Kubernetes 日志架构一致。
+
+总结：
+
+对于 OpenCode + Codex + Claude Code session 审计归档，推荐：
+
+Fluent Bit / OpenTelemetry Collector → 脱敏 → Azure Blob Storage Immutable Policy
+
+不要：
+
+工具 session 文件 → 直接挂载 Blob/NFS → Immutable
+
+因为：
+
+容易泄露敏感数据
+不利于审计
+文件修改检测弱
+权限边界不好控制
+
+这个架构也符合企业做 AI Coding Assistant Governance / AI Agent Audit Trail 的常见设计。
