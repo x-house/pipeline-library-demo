@@ -1,0 +1,940 @@
+                         AWS
+                          │
+             ┌────────────┴────────────┐
+             │                         │
+            EKS                       RDS
+             │                         │
+           Pod ────────────────────────┤
+             │                         │
+             │ IAM                     │ SG
+             ↓                         ↓
+       Pod Identity                  PostgreSQL
+             │
+             ↓
+          IAM Role
+             │
+             ↓
+            S3
+             ↑
+             │
+       S3 Gateway Endpoint
+
+
+
+Pod
+ ↓
+Fluent Bit
+ ↓
+Loki
+ ↓
+Grafana
+
+
+
+EKS
+ │
+ ├── Metrics → Prometheus
+ │
+ └── Logs → Fluent Bit → CloudWatch Logs
+                         ↓
+                    Grafana / Insights
+
+而不是一开始就上：
+
+Fluent Bit → Loki → Grafana
+
+
+
+
+
+
+
+================================
+
+
+如果是你现在这个架构：
+
+User
+ ↓
+DX
+ ↓
+Internal VPC
+ ↓
+PrivateLink
+ ↓
+一个 NLB
+ ↓
+EKS
+ ↓
+多个 App
+
+我会优先推荐 NGINX Ingress Controller，但有一个重要变化：截至 2026 年，不建议新项目再选传统社区 ingress-nginx 作为长期标准。如果你要做新的企业 EKS 平台，我更倾向于 AWS Load Balancer Controller / Gateway API 路线，或者选择仍有明确长期维护路线的 NGINX 产品方案。
+
+如果只从你这个架构选
+Controller	推荐度	适合你的原因
+NGINX Ingress	⭐⭐⭐⭐⭐	成熟、Host/Path 路由强、企业使用广
+HAProxy Ingress	⭐⭐⭐⭐	性能好、配置灵活，你之前也考虑过 HAProxy
+Traefik	⭐⭐⭐	简单、动态配置方便
+AWS Load Balancer Controller	⭐⭐⭐⭐	AWS 原生，但通常让 ALB/NLB 承担入口
+Istio Gateway	⭐⭐⭐	如果以后需要 Service Mesh 才考虑
+你的场景我更建议
+
+如果坚持：
+
+一个 NLB → 多个 App
+
+那么：
+
+                    Internal VPC
+                         │
+                    VPC Endpoint
+                         │
+                      PrivateLink
+                         │
+                         ↓
+                    ┌────────┐
+                    │  NLB   │
+                    └────┬───┘
+                         │
+                         ↓
+                ┌────────────────┐
+                │ NGINX Gateway  │
+                │ / Ingress      │
+                └───────┬────────┘
+                        │
+             ┌──────────┼──────────┐
+             ↓          ↓          ↓
+           App-A      App-B      App-C
+
+例如：
+
+app-a.company.internal
+app-b.company.internal
+app-c.company.internal
+
+NGINX 根据：
+
+Host
+Path
+
+进行路由。
+
+但是我建议你考虑 Gateway API
+
+如果这是你现在新建的 EKS 平台，我不会把架构完全绑定在传统 Ingress API 上。
+
+可以逐渐采用：
+
+NLB
+ ↓
+Gateway
+ ↓
+HTTPRoute
+ ├── App A
+ ├── App B
+ └── App C
+
+而不是：
+
+NLB
+ ↓
+Ingress
+ ↓
+Apps
+
+Gateway API 对多团队、多 App 的路由模型更清晰，也更适合长期演进。
+
+还有一个特别重要的点：TLS
+
+你的企业用户大概率访问：
+
+https://app-a.company.internal
+
+那么你需要决定 TLS 在哪里终止。
+
+一种比较适合你的方式：
+
+User
+ ↓ HTTPS
+DX
+ ↓
+PrivateLink
+ ↓
+NLB
+ ↓ TCP 443
+NGINX
+ ↓ TLS termination
+HTTP
+ ↓
+App
+
+NGINX 根据：
+
+Host: app-a.company.internal
+
+转发到：
+
+app-a
+
+这样一个 NLB 就能承载很多 App。
+
+如果你问我“你这个项目最终选哪个？”
+
+我的建议是：
+
+新建平台
+Terraform
+ ├── NLB
+ ├── PrivateLink
+ ├── VPC Endpoint
+ └── Route53
+
+EKS
+ ├── NGINX/Gateway implementation
+ ├── Gateway / HTTPRoute
+ ├── Pod Identity
+ ├── Fluent Bit
+ ├── Metrics
+ └── Monitoring
+如果你们公司已经大量使用 HAProxy
+
+那么：
+
+HAProxy Ingress 也非常合适。
+
+特别是你之前已经考虑过：
+
+HAProxy
+ ↓
+app-a
+app-b
+app-c
+
+HAProxy 本身非常擅长这种 Host-based routing / TCP / HTTP / TLS 场景。
+
+不过我需要纠正前面一个关键点：如果你最终采用“共享 NLB + Kubernetes Ingress Controller”，AWS Load Balancer Controller 并不是必需的；它主要是 Kubernetes ↔ AWS Load Balancer 的控制器，而 NGINX/HAProxy 才是负责应用层路由的 Controller。
+
+如果你愿意，
+我可以下一步直接给你画一套你这个 DX → Internal VPC → PrivateLink → 共享 NLB → NGINX → 100 个 EKS App → Route53 的生产架构，并
+告诉你 NLB 应该由 Terraform 创建还是由 Kubernetes Controller 创建。
+
+Ingress Controller  和Gateway API   那个更好，更适合我的需求
+
+对你这个需求，我会选 Gateway API，但要注意：
+
+Gateway API 是 Kubernetes 的标准 API 模型，不是一个具体的 Controller。
+你仍然需要一个实现 Gateway API 的 Controller/Gateway implementation。
+
+你的场景是：
+
+企业 User
+   ↓
+DX
+   ↓
+Internal VPC
+   ↓
+PrivateLink
+   ↓
+共享 NLB
+   ↓
+EKS Gateway
+   ↓
+多个 App
+为什么 Gateway API 更适合你
+
+你明确希望：
+
+一个 NLB
+暴露很多 App
+内部企业用户通过不同域名访问
+例如 app-a.company.internal
+app-b.company.internal
+app-c.company.internal
+后面可能几十/上百个 App
+企业级 EKS
+
+这正是 Gateway API 比传统 Ingress 更舒服的场景。
+
+传统 Ingress
+
+大概是：
+
+              NLB
+               ↓
+        Ingress Controller
+               ↓
+          Ingress
+       ┌───────┼───────┐
+       ↓       ↓       ↓
+     App-A   App-B   App-C
+
+一个 Ingress 里面可能塞很多规则：
+
+rules:
+  - host: app-a.company.internal
+  - host: app-b.company.internal
+  - host: app-c.company.internal
+
+随着 App 增多，容易变成：
+
+一个巨大的 Ingress
+
+而且不同团队之间权限边界比较粗。
+
+Gateway API
+
+可以变成：
+
+                  NLB
+                   ↓
+                Gateway
+                   │
+        ┌──────────┼──────────┐
+        ↓          ↓          ↓
+    HTTPRoute   HTTPRoute   HTTPRoute
+       App-A       App-B       App-C
+
+例如平台团队负责：
+
+kind: Gateway
+
+应用团队只负责自己的：
+
+kind: HTTPRoute
+
+于是：
+
+Platform Team
+     │
+     ↓
+  Gateway
+     │
+     ├──────────────┐
+     │              │
+App Team A      App Team B
+     │              │
+ HTTPRoute       HTTPRoute
+     │              │
+    App A          App B
+
+这对企业 EKS 非常好。
+
+你的架构尤其适合这种模式
+
+比如：
+
+Gateway
+  │
+  ├── HTTPRoute
+  │      host: app-a.company.internal
+  │      ↓
+  │    Service A
+  │
+  ├── HTTPRoute
+  │      host: app-b.company.internal
+  │      ↓
+  │    Service B
+  │
+  └── HTTPRoute
+         host: app-c.company.internal
+         ↓
+       Service C
+
+最终：
+
+app-a.company.internal ─┐
+app-b.company.internal ─┼→ PrivateLink → NLB → Gateway → Apps
+app-c.company.internal ─┘
+
+一个 NLB 就可以承载很多 App。
+
+Gateway API 还有一个优势：职责分离
+
+这是我认为你这个企业架构最重要的优势。
+
+你可以定义：
+
+Infrastructure Team
+       │
+       ↓
+     Gateway
+       │
+       │ 允许哪些 namespace 使用
+       ↓
+Application Teams
+       │
+       ├── HTTPRoute → App A
+       ├── HTTPRoute → App B
+       └── HTTPRoute → App C
+
+而不是让每个团队都可以修改：
+
+Ingress
+
+整个入口。
+
+但是有一个现实问题
+
+Gateway API 本身不会帮你创建 NLB，也不会帮你处理流量。
+
+你需要：
+
+Gateway API
+      +
+Gateway Controller / Implementation
+
+例如：
+
+Gateway API
+    ↓
+具体 Controller
+    ↓
+实际 Proxy / Load Balancer
+
+所以你的选择其实应该是：
+
+Ingress API + Ingress Controller
+
+vs
+
+Gateway API + Gateway Controller
+
+而不是：
+
+Ingress Controller vs Gateway API
+
+对你的架构，我会这样设计
+
+如果 NLB 是你们网络团队/Terraform 管理：
+
+                    Route 53
+                       │
+             app-a.company.internal
+                       │
+                       ↓
+User → DX → Internal VPC
+               │
+               ↓
+          VPC Endpoint
+               │
+           PrivateLink
+               │
+               ↓
+              NLB
+               │
+               ↓
+        Gateway Controller
+               │
+             Gateway
+               │
+       ┌───────┼────────┐
+       ↓       ↓        ↓
+   HTTPRoute HTTPRoute HTTPRoute
+       ↓       ↓        ↓
+     App-A   App-B    App-C
+
+我会更推荐这个。
+
+那 NGINX 还要不要？
+
+如果你选择 Gateway API，你仍然可以使用某个 Gateway API implementation。
+
+例如你可以考虑：
+
+Gateway API
+     ↓
+NGINX Gateway Fabric
+
+或者其他支持 Gateway API 的实现。
+
+这里和传统：
+
+NGINX Ingress Controller
+
+不是完全一样的产品/架构。
+
+最终给你的选择
+需求	Ingress	Gateway API
+一个 LB 多 App	✅	✅
+Host routing	✅	✅
+Path routing	✅	✅
+多团队	⚠️	⭐⭐⭐⭐⭐
+权限隔离	⚠️	⭐⭐⭐⭐⭐
+企业平台	✅	⭐⭐⭐⭐⭐
+Kubernetes 长期方向	⚠️	⭐⭐⭐⭐⭐
+配置模型	简单	稍复杂
+生态成熟度	很成熟	快速成熟
+新项目	⚠️	推荐
+所以我的结论：
+
+你的这个 EKS 项目，我推荐 Gateway API。
+
+特别是你计划：
+
+一个 NLB
+    ↓
+几十/上百个 App
+
+那么：
+
+NLB
+ ↓
+Gateway
+ ↓
+HTTPRoute
+ ├── App A
+ ├── App B
+ ├── App C
+ └── ...
+
+比把所有东西塞进一个巨大的 Ingress 更适合长期维护。
+
+而且你现在是在从头设计 EKS 平台，不是迁移一个已经大量使用 Ingress 的旧集群，因此现在采用 Gateway API 的成本最低。
+
+怎么安装gatewayapi
+
+可以，但先纠正一个关键概念：
+
+Gateway API 不是一个需要单独“安装的 Controller”。
+
+你需要安装两部分：
+
+Gateway API CRDs —— Kubernetes 的 GatewayClass / Gateway / HTTPRoute 等资源定义
+Gateway Controller / Implementation —— 真正负责处理流量的实现
+
+官方 Gateway API 文档也是这样定义的：先安装 CRDs，再安装一个 Gateway Controller。
+
+对于你目前的 EKS + 一个共享 NLB + PrivateLink + 多个内部 App，我建议我们不要直接装一个“Gateway API”就结束，而是先确定 谁负责这个 NLB。
+
+你的目标架构
+
+你目前想做的是：
+
+企业 User
+    │
+    ↓
+   DX
+    │
+    ↓
+Internal VPC
+    │
+    ↓
+VPC Endpoint
+    │
+    ↓
+ AWS PrivateLink
+    │
+    ↓
+   NLB                 ← 希望共享一个
+    │
+    ↓
+Gateway
+    │
+    ├── HTTPRoute → App A
+    ├── HTTPRoute → App B
+    ├── HTTPRoute → App C
+    └── HTTPRoute → App D
+
+我认为这个设计是合理的。
+
+方案一：Gateway API + AWS Load Balancer Controller
+
+这是 AWS 原生路线。
+
+现在的 AWS Load Balancer Controller 2.14.0+ 已经支持 Gateway API，创建 Gateway 时可以创建 AWS ALB。
+
+但这里有一个问题：
+
+它创建的是 ALB，不是你 PrivateLink 架构需要的 NLB。
+
+所以如果你的要求是：
+
+PrivateLink
+    ↓
+NLB
+    ↓
+Gateway
+
+那么不能简单地：
+
+Gateway
+ ↓
+AWS Load Balancer Controller
+ ↓
+ALB
+
+因为 AWS 官方当前 Gateway API 支持的这个模式是：
+
+Gateway
+ ↓
+AWS Load Balancer Controller
+ ↓
+ALB
+
+方案二：NLB 由 Terraform 管，Gateway Controller 管应用路由
+
+这个更符合你现在的架构。
+
+也就是：
+
+Terraform
+│
+├── NLB
+├── PrivateLink
+├── VPC Endpoint
+└── Route53
+
+然后 Kubernetes：
+
+EKS
+│
+├── Gateway API CRDs
+│
+├── Gateway Controller
+│
+├── Gateway
+│
+├── HTTPRoute
+│
+└── Services
+
+最终：
+
+                       Terraform
+                           │
+                  ┌────────┼────────┐
+                  ↓        ↓        ↓
+                 NLB   PrivateLink Route53
+                  │
+                  ↓
+             Gateway Controller
+                  │
+                Gateway
+                  │
+       ┌──────────┼──────────┐
+       ↓          ↓          ↓
+   HTTPRoute  HTTPRoute  HTTPRoute
+       ↓          ↓          ↓
+     App A      App B      App C
+
+这其实是我更推荐你采用的模式。
+
+第一步：安装 Gateway API CRDs
+
+现在 Gateway API Standard Channel 的安装方式可以直接使用官方 release。
+
+目前官方 Getting Started 文档示例是 v1.6.1：
+
+kubectl apply --server-side \
+  -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
+
+官方说明 Standard Channel 包含：
+
+GatewayClass
+Gateway
+HTTPRoute
+ReferenceGrant
+
+等稳定资源。
+
+安装后检查：
+
+kubectl get crd | grep gateway.networking.k8s.io
+
+应该看到类似：
+
+gatewayclasses.gateway.networking.k8s.io
+gateways.gateway.networking.k8s.io
+httproutes.gateway.networking.k8s.io
+referencegrants.gateway.networking.k8s.io
+
+然后：
+
+kubectl api-resources | grep gateway
+
+应该能看到：
+
+gatewayclasses
+gateways
+httproutes
+第二步：你还需要 Gateway Controller
+
+仅仅执行：
+
+kubectl apply ... standard-install.yaml
+
+是不够的。
+
+这时候你只有：
+
+Gateway API CRDs
+
+但还没有真正处理流量的东西。
+
+例如你创建：
+
+kind: Gateway
+
+Kubernetes 只知道：
+
+“有一个 Gateway 对象。”
+
+但没有 Controller 去执行：
+
+“我要监听 443，然后把请求转给 App A。”
+
+所以还需要：
+
+Gateway API
+     +
+Gateway Controller
+你的情况我建议先不要急着安装 Controller
+
+因为你现在有一个非常特殊的需求：
+
+PrivateLink
+   ↓
+共享 NLB
+   ↓
+Gateway
+   ↓
+多个 App
+
+我们需要选一个能够作为这个共享 NLB 后面的 Gateway implementation。
+
+你可以考虑：
+
+NGINX Gateway Fabric
+HAProxy
+Envoy Gateway
+Traefik
+
+其中我比较建议你优先考虑：
+
+Gateway API
+    ↓
+Envoy Gateway
+    ↓
+共享 NLB
+
+或者：
+
+Gateway API
+    ↓
+NGINX Gateway Fabric
+    ↓
+共享 NLB
+如果选择 Envoy Gateway
+
+最终结构：
+
+                         EKS
+                          │
+                     ┌────▼────┐
+                     │  NLB    │
+                     └────┬────┘
+                          │
+                          ↓
+                  Envoy Gateway
+                          │
+                       Gateway
+                          │
+              ┌───────────┼───────────┐
+              ↓           ↓           ↓
+         HTTPRoute    HTTPRoute    HTTPRoute
+              ↓           ↓           ↓
+            App-A       App-B       App-C
+
+例如：
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: internal-gateway
+  namespace: gateway-system
+spec:
+  gatewayClassName: envoy
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "*.company.internal"
+
+然后 App A：
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-a
+  namespace: app-a
+spec:
+  parentRefs:
+    - name: internal-gateway
+      namespace: gateway-system
+
+  hostnames:
+    - "app-a.company.internal"
+
+  rules:
+    - backendRefs:
+        - name: app-a
+          port: 80
+
+App B：
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-b
+  namespace: app-b
+spec:
+  parentRefs:
+    - name: internal-gateway
+      namespace: gateway-system
+
+  hostnames:
+    - "app-b.company.internal"
+
+  rules:
+    - backendRefs:
+        - name: app-b
+          port: 80
+
+这样：
+
+app-a.company.internal
+             ↓
+            NLB
+             ↓
+       Envoy Gateway
+             ↓
+          HTTPRoute
+             ↓
+           App A
+
+而：
+
+app-b.company.internal
+             ↓
+            NLB
+             ↓
+       Envoy Gateway
+             ↓
+          HTTPRoute
+             ↓
+           App B
+这非常适合你的多 App 场景
+
+你最终可以做到：
+
+一个 NLB
+一个 PrivateLink
+一个 Gateway
+       │
+       ├── app-a.company.internal
+       ├── app-b.company.internal
+       ├── app-c.company.internal
+       ├── app-d.company.internal
+       └── ...
+
+而不是：
+
+App A → NLB A → PrivateLink A
+App B → NLB B → PrivateLink B
+App C → NLB C → PrivateLink C
+
+这样规模会好很多。
+
+但是还有一个问题：NLB 怎么把流量交给 Gateway？
+
+这里是你这个架构最值得注意的地方。
+
+如果 NLB 是 Terraform 创建：
+
+Terraform
+   ↓
+NLB
+
+那么 NLB 后面的 Target Group 必须指向 Gateway Controller 的 Service。
+
+例如：
+
+NLB
+ │
+ └── Target Group
+       │
+       ↓
+Service: envoy-gateway
+       │
+       ↓
+Gateway Pods
+
+因此：
+
+NLB
+ ↓
+Gateway Service
+ ↓
+Gateway Pods
+ ↓
+HTTPRoute
+ ↓
+App Services
+
+这个模型非常清晰。
+
+所以你现在可以先做这一步
+
+先只安装 Gateway API CRDs，不要急着安装 AWS Load Balancer Controller。
+
+kubectl apply --server-side \
+  -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
+
+检查：
+
+kubectl get crd | grep gateway.networking.k8s.io
+
+然后：
+
+kubectl get gatewayclass
+
+这时候可能是：
+
+No resources found
+
+这是正常的。
+
+因为你还没有安装 Gateway Controller。
+
+下一步我建议直接按你的真实架构做
+
+你的需求已经比较明确了：
+
+User
+ ↓
+DX
+ ↓
+Internal VPC
+ ↓
+PrivateLink
+ ↓
+一个共享 NLB
+ ↓
+Gateway API
+ ↓
+多个 EKS App
+
+我建议下一步直接选择 Envoy Gateway / NGINX Gateway Fabric / HAProxy 中一个，然后
+我可以给你完整的：
+
+1. Gateway Controller 安装
+2. GatewayClass
+3. Gateway
+4. NLB → Gateway Service
+5. HTTPRoute
+6. Route53
+7. PrivateLink
+8. TLS/证书
+9. 多 Namespace 多 App
+
+其中 Gateway API 本身只负责 Kubernetes API 模型，真正的 Controller 选择会直接影响你后面 NLB 和 PrivateLink 的实现方式。
