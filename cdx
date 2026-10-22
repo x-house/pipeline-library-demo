@@ -8,7 +8,7 @@ curl -fsSL https://github.com/openai/codex/releases/latest/download/install.sh \
 
 
 mkdir -p /opt/codex
-curl -fsSL https://chatgpt.com/codex/install.sh | env CODEX_HOME=/opt/codex CODEX_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://chatgpt.com/codex/install.sh | env CODEX_HOME=/opt/codex CODEX_INSTALL_DIR=/usr/local/bin  CODEX_NON_INTERACTIVE=1  sh
 
 https://chatgpt.com/plugins/codex-security
 codex plugin marketplace list
@@ -18,3 +18,19 @@ codex plugin list
 unset CODEX_HOME
 codex plugin marketplace list
 codex plugin list
+
+
+https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_amd64.deb
+https://learn.chatgpt.com/docs/quickstart
+https://learn.chatgpt.com/docs/app#getting-started
+
+
+unset CODEX_HOME
+codex plugin marketplace list
+codex plugin list
+https://learn.chatgpt.com/docs/app#getting-started
+https://persistent.oaistatic.com/codex-app-prod/linux/deb/latest/chatgpt_amd64.deb
+
+https://openai.com/zh-Hans-CN/daybreak/codex-security-plugin/#codex-cli
+cd /home/user/codedirectory
+curl -fsSL https://openai.com/codex/security/scan.sh | bash
