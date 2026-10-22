@@ -1,0 +1,15 @@
+curl -fsSL https://github.com/openai/codex/releases/latest/download/install.sh | sh 
+
+curl -fsSL  https://chatgpt.com/codex/install.sh
+
+sudo mkdir -p /usr/local/bin
+curl -fsSL https://github.com/openai/codex/releases/latest/download/install.sh \
+  | CODEX_INSTALL_DIR=/usr/local/bin sh
+
+
+mkdir -p /opt/codex
+curl -fsSL https://chatgpt.com/codex/install.sh | env CODEX_HOME=/opt/codex CODEX_INSTALL_DIR=/usr/local/bin sh
+
+https://chatgpt.com/plugins/codex-security
+codex plugin list
+codex plugin add codex-security@openai-curated
